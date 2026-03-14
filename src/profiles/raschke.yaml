@@ -1,0 +1,13 @@
+name: linda_raschke_style
+type: short_term_pattern
+market_bias: mixed
+holding_period: intraday_to_2d
+entry_logic:
+  - short_term_pattern_detected
+  - volatility_filter_pass
+exit_logic:
+  - fixed_target_profit
+  - time_stop
+risk_logic:
+  - tight_stop
+  - size_by_volatility

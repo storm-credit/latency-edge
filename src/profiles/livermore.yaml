@@ -1,0 +1,14 @@
+name: jesse_livermore_style
+type: breakout
+market_bias: trend
+holding_period: multi_day
+entry_logic:
+  - momentum_breakout
+  - high_volume_confirmation
+  - pyramiding_on_profit
+exit_logic:
+  - slow_trailing_stop
+  - trend_reversal
+risk_logic:
+  - strict_initial_stop
+  - size_scaled_by_trend_strength

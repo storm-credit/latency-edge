@@ -1,0 +1,14 @@
+name: al_brooks_style
+type: price_action
+market_bias: neutral
+holding_period: intraday_scalping
+entry_logic:
+  - bar_by_bar_analysis
+  - range_breakout_or_fade
+  - micro_trend_confirmation
+exit_logic:
+  - measured_move_target
+  - setup_invalidation
+risk_logic:
+  - wider_stop_lower_size
+  - strict_daily_loss_limit
