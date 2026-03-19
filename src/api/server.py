@@ -14,7 +14,7 @@ from src.config import Config
 
 class ApiEngine:
     def __init__(self):
-        self.queue = asyncio.Queue()
+        self.queue: asyncio.Queue = asyncio.Queue(maxsize=500)
         self.upbit = UpbitCollector(["KRW-BTC"], ["ticker"])
         self.binance = BinanceCollector(["btcusdt"], ["ticker"])
         self.fx_rate = Config.FX_RATE
@@ -151,8 +151,8 @@ app = FastAPI(title="Latency Edge API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=["http://localhost:3000"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )

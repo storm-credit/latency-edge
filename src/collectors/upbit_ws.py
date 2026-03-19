@@ -10,9 +10,9 @@ logger = logging.getLogger(__name__)
 class UpbitCollector:
     MAX_RETRY_DELAY = 60
 
-    def __init__(self, symbols, channels):
+    def __init__(self, symbols: list[str], channels: list[str] | None = None):
         self.symbols = symbols
-        self.channels = channels
+        # channels 파라미터는 향후 orderbook 등 확장용 (현재 ticker만 사용)
         self.uri = "wss://api.upbit.com/websocket/v1"
 
     async def connect(self, queue: asyncio.Queue):
