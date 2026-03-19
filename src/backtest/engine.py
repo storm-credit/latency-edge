@@ -18,6 +18,7 @@ class BacktestEngine:
         """
         current_position = 0.0
         entry_price = 0.0
+        entry_time = None
 
         for idx, row in data_feed.iterrows():
             market_state = row.to_dict()
@@ -26,34 +27,36 @@ class BacktestEngine:
             # Simple wrapper for entry/exit execution logging
             if current_position == 0 and self.strategy.should_enter():
                 current_position = self.strategy.position_size()
+                self.strategy.state["in_position"] = True
                 slippage = self.slippage_model.calculate_slippage(
-                    order_size=current_position, 
+                    order_size=current_position,
                     current_price=row['price'],
                     side='buy',
                     volatility=row.get('volatility', 0.0)
                 )
                 entry_price = row['price'] + slippage
-            
+                entry_time = idx
+
             elif current_position > 0 and self.strategy.should_exit():
                 slippage = self.slippage_model.calculate_slippage(
-                    order_size=current_position, 
+                    order_size=current_position,
                     current_price=row['price'],
                     side='sell',
                     volatility=row.get('volatility', 0.0)
                 )
                 exit_price = row['price'] - slippage
-                
-                # Record trade
+
                 pnl = (exit_price - entry_price) * current_position
                 self.capital += pnl
                 self.trades.append({
-                    "entry_time": idx, # Simplified
+                    "entry_time": entry_time,
                     "exit_time": idx,
                     "entry_price": entry_price,
                     "exit_price": exit_price,
                     "pnl": pnl
                 })
                 current_position = 0.0
+                self.strategy.state["in_position"] = False
             
             self.equity_curve.append(self.capital)
 

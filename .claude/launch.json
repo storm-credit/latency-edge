@@ -1,0 +1,20 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "fastapi-backend",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["run_server.py"],
+      "autoPort": false,
+      "port": 8009
+    },
+    {
+      "name": "nextjs-dashboard",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["node_modules/next/dist/bin/next", "dev"],
+      "autoPort": true,
+      "port": 3000,
+      "cwd": "dashboard-web"
+    }
+  ]
+}

@@ -1,49 +1,263 @@
 import pytest
+import numpy as np
+import pandas as pd
 from src.strategies.lead_lag_scalper import LeadLagScalper
 from src.strategies.momentum_breakout import MomentumBreakout
+from src.risk.daily_stop import DailyRiskManager
+from src.backtest.slippage import SlippageModel
+from src.backtest.engine import BacktestEngine
 
-def test_lead_lag_scalper():
+
+# ═══ Lead-Lag Scalper ═══
+
+def test_lead_lag_scalper_discount_entry():
+    """역프리미엄 수렴 전략: 디스카운트 시 매수, 프리미엄 복귀 시 매도"""
     config = {
-        "entry_threshold": 0.05,
+        "entry_threshold": -0.05,
         "exit_threshold": 0.01,
         "fx_rate": 1000.0,
-        "position_size": 1.0
+        "position_size": 1.0,
+        "min_hold_ticks": 0,  # 테스트용: 즉시 청산 허용
+        "cooldown_ticks": 0,
     }
     strategy = LeadLagScalper(config)
-    
-    # tick 1: no premium -> local=60000, global=60
+
+    # 0% premium → 진입 안 함
     strategy.on_tick({'upbit_price': 60000, 'binance_price': 60})
     assert not strategy.should_enter()
-    
-    # tick 2: 10% premium -> local=66000, global=60
-    strategy.on_tick({'upbit_price': 66000, 'binance_price': 60})
+
+    # -10% 역프리미엄 → 진입
+    strategy.on_tick({'upbit_price': 54000, 'binance_price': 60})
     assert strategy.should_enter()
-    
-    # tick 3: 0% premium -> local=60000, global=60
-    strategy.on_tick({'upbit_price': 60000, 'binance_price': 60})
+    strategy.state["in_position"] = True
+
+    # +2% 복귀 → 청산
+    strategy.on_tick({'upbit_price': 61200, 'binance_price': 60})
     assert strategy.should_exit()
+
+
+def test_lead_lag_scalper_no_exit_while_discount():
+    """역프리미엄 지속 시 청산하지 않음"""
+    config = {
+        "entry_threshold": -0.05,
+        "exit_threshold": 0.01,
+        "fx_rate": 1000.0,
+        "min_hold_ticks": 0,
+        "cooldown_ticks": 0,
+    }
+    strategy = LeadLagScalper(config)
+
+    strategy.on_tick({'upbit_price': 54000, 'binance_price': 60})
+    assert strategy.should_enter()
+    strategy.state["in_position"] = True
+
+    # -3% → 아직 청산 안 함
+    strategy.on_tick({'upbit_price': 58200, 'binance_price': 60})
+    assert not strategy.should_exit()
+
+
+def test_lead_lag_cooldown():
+    """청산 후 쿨다운 기간 동안 재진입 차단"""
+    config = {
+        "entry_threshold": -0.05,
+        "exit_threshold": 0.01,
+        "fx_rate": 1000.0,
+        "min_hold_ticks": 0,
+        "cooldown_ticks": 2,
+    }
+    strategy = LeadLagScalper(config)
+
+    # 진입
+    strategy.on_tick({'upbit_price': 54000, 'binance_price': 60})
+    assert strategy.should_enter()
+    strategy.state["in_position"] = True
+
+    # 청산 → 쿨다운 시작
+    strategy.on_tick({'upbit_price': 61200, 'binance_price': 60})
+    assert strategy.should_exit()
+    strategy.state["in_position"] = False
+
+    # 쿨다운 중 → 재진입 차단
+    # should_exit()에서 cooldown=2 설정, on_tick에서 1씩 감소
+    strategy.on_tick({'upbit_price': 54000, 'binance_price': 60})
+    assert not strategy.should_enter()  # cooldown: 2→1 (on_tick 감소 후 1)
+
+    strategy.on_tick({'upbit_price': 54000, 'binance_price': 60})
+    assert strategy.should_enter()  # cooldown: 1→0 (on_tick 감소 후 0, 진입 가능)
+
+
+def test_lead_lag_min_hold():
+    """최소 보유 틱 미달 시 청산 차단"""
+    config = {
+        "entry_threshold": -0.05,
+        "exit_threshold": 0.01,
+        "fx_rate": 1000.0,
+        "min_hold_ticks": 3,
+        "cooldown_ticks": 0,
+    }
+    strategy = LeadLagScalper(config)
+
+    strategy.on_tick({'upbit_price': 54000, 'binance_price': 60})
+    assert strategy.should_enter()
+    strategy.state["in_position"] = True
+
+    # +2% 복귀지만 아직 1틱만 보유 → 청산 안 함
+    strategy.on_tick({'upbit_price': 61200, 'binance_price': 60})
+    assert not strategy.should_exit()  # ticks=1
+
+    strategy.on_tick({'upbit_price': 61200, 'binance_price': 60})
+    assert not strategy.should_exit()  # ticks=2
+
+    strategy.on_tick({'upbit_price': 61200, 'binance_price': 60})
+    assert strategy.should_exit()  # ticks=3 → 최소 보유 충족
+
+
+# ═══ Momentum Breakout ═══
 
 def test_momentum_breakout():
     config = {
         "lookback": 3,
-        "volume_multiplier": 1.5
+        "volume_multiplier": 1.5,
+        "trail_pct": 0.02,
+        "stop_loss_pct": 0.03,
+        "min_hold_ticks": 0,  # 테스트용
     }
     strategy = MomentumBreakout(config)
-    
-    # tick 1
+
     strategy.on_tick({'price': 100, 'volume': 10})
-    assert not strategy.should_enter() # not enough history
-    
-    # tick 2
+    assert not strategy.should_enter()
     strategy.on_tick({'price': 105, 'volume': 12})
-    assert not strategy.should_enter() # not enough history
-    
-    # tick 3
+    assert not strategy.should_enter()
     strategy.on_tick({'price': 102, 'volume': 11})
-    assert not strategy.should_enter() # has 3 history now, but 102 is not > highest(105)
-    
-    # tick 4 - breakout!
-    # avg volume of previous 3 was (10+12+11)/3 = 11
-    # condition: px > 105, vol > 11 * 1.5 = 16.5
+    assert not strategy.should_enter()
+
+    # breakout
     strategy.on_tick({'price': 110, 'volume': 20})
     assert strategy.should_enter()
+    strategy.state["in_position"] = True
+
+    # 상승
+    strategy.on_tick({'price': 115, 'volume': 15})
+    assert not strategy.should_exit()
+
+    # 소폭 하락 (112.7 위)
+    strategy.on_tick({'price': 113, 'volume': 10})
+    assert not strategy.should_exit()
+
+    # trailing stop (115 * 0.98 = 112.7)
+    strategy.on_tick({'price': 112, 'volume': 10})
+    assert strategy.should_exit()
+
+
+def test_momentum_breakout_stop_loss():
+    """Stop Loss는 최소 보유 틱 무시하고 즉시 발동"""
+    config = {
+        "lookback": 3,
+        "volume_multiplier": 1.5,
+        "trail_pct": 0.02,
+        "stop_loss_pct": 0.03,
+        "min_hold_ticks": 10,  # 높은 최소 보유 → 하지만 stop loss는 무시
+    }
+    strategy = MomentumBreakout(config)
+
+    strategy.on_tick({'price': 100, 'volume': 10})
+    strategy.on_tick({'price': 105, 'volume': 12})
+    strategy.on_tick({'price': 102, 'volume': 11})
+    strategy.on_tick({'price': 110, 'volume': 20})
+    assert strategy.should_enter()
+    strategy.state["in_position"] = True
+
+    # 즉시 급락 → stop loss (110 * 0.97 = 106.7)
+    strategy.on_tick({'price': 106, 'volume': 10})
+    assert strategy.should_exit()  # min_hold=10이지만 stop loss 우선
+
+
+# ═══ DailyRiskManager ═══
+
+def test_risk_manager_daily_limit():
+    """일일 손실 한도 초과 시 거래 차단"""
+    rm = DailyRiskManager(max_daily_loss=1000.0, max_consecutive_losses=10)
+
+    rm.update_result(-500.0)
+    assert rm.check_trade_allowed()
+
+    rm.update_result(-600.0)
+    assert not rm.check_trade_allowed()  # 1100 >= 1000
+
+
+def test_risk_manager_consecutive():
+    """연속 손실 한도 초과 시 거래 차단"""
+    rm = DailyRiskManager(max_daily_loss=999999.0, max_consecutive_losses=3)
+
+    rm.update_result(-1.0)
+    rm.update_result(-1.0)
+    assert rm.check_trade_allowed()
+
+    rm.update_result(-1.0)
+    assert not rm.check_trade_allowed()  # 3연패
+
+
+def test_risk_manager_reset():
+    """수익 시 연속 카운터 리셋, 일일 리셋"""
+    rm = DailyRiskManager(max_daily_loss=1000.0, max_consecutive_losses=3)
+
+    rm.update_result(-1.0)
+    rm.update_result(-1.0)
+    rm.update_result(100.0)  # 수익 → 연속 리셋
+    assert rm.consecutive_losses == 0
+
+    rm.reset_daily()
+    assert rm.current_loss == 0.0
+
+
+# ═══ SlippageModel ═══
+
+def test_slippage_always_positive():
+    """슬리피지는 항상 양수"""
+    sm = SlippageModel(constant_slippage_bps=2.0, latency_ms=50, impact_factor=0.1)
+    for side in ["buy", "sell"]:
+        slip = sm.calculate_slippage(order_size=1.0, current_price=60000, side=side, volatility=0.01)
+        assert slip > 0
+
+def test_slippage_increases_with_size():
+    """주문 크기 증가 시 슬리피지 증가 (market impact)"""
+    sm = SlippageModel(constant_slippage_bps=2.0, latency_ms=50, impact_factor=0.1)
+    slip_small = sm.calculate_slippage(order_size=0.1, current_price=60000, side="buy")
+    slip_large = sm.calculate_slippage(order_size=10.0, current_price=60000, side="buy")
+    assert slip_large > slip_small
+
+def test_slippage_increases_with_volatility():
+    """변동성 증가 시 슬리피지 증가"""
+    sm = SlippageModel(constant_slippage_bps=2.0, latency_ms=50, impact_factor=0.1)
+    slip_calm = sm.calculate_slippage(order_size=1.0, current_price=60000, side="buy", volatility=0.001)
+    slip_wild = sm.calculate_slippage(order_size=1.0, current_price=60000, side="buy", volatility=0.05)
+    assert slip_wild > slip_calm
+
+
+# ═══ BacktestEngine ═══
+
+def test_backtest_engine_basic():
+    """백테스트 엔진: 상승 시나리오에서 수익 발생"""
+    config = {
+        "lookback": 3, "volume_multiplier": 1.5,
+        "trail_pct": 0.02, "stop_loss_pct": 0.03, "min_hold_ticks": 0,
+    }
+    strategy = MomentumBreakout(config)
+    sm = SlippageModel(constant_slippage_bps=1.0, latency_ms=10, impact_factor=0.01)
+    engine = BacktestEngine(strategy, sm, initial_capital=1000000)
+
+    data = pd.DataFrame([
+        {"price": 100, "volume": 10, "volatility": 0.01},
+        {"price": 105, "volume": 12, "volatility": 0.01},
+        {"price": 102, "volume": 11, "volatility": 0.01},
+        {"price": 110, "volume": 20, "volatility": 0.01},  # breakout entry
+        {"price": 115, "volume": 15, "volatility": 0.01},  # hold
+        {"price": 120, "volume": 15, "volatility": 0.01},  # hold
+        {"price": 116, "volume": 10, "volatility": 0.01},  # trailing stop (120*0.98=117.6 > 116)
+    ])
+
+    engine.run(data)
+    results = engine.get_results()
+    assert results["total_trades"] == 1
+    assert len(results["equity"]) == 7
+    assert results["trades"][0]["pnl"] > 0  # 수익 거래

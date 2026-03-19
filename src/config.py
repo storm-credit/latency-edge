@@ -1,0 +1,32 @@
+"""중앙 설정 관리 — 하드코딩된 값을 환경변수/기본값으로 통합"""
+import os
+
+
+class Config:
+    # 환율
+    FX_RATE: float = float(os.environ.get("FX_RATE", "1400.0"))
+
+    # 포트폴리오
+    CAPITAL_PER_STRATEGY: float = float(os.environ.get("CAPITAL_PER_STRATEGY", "5000000.0"))
+    TRADE_SIZE_KRW: float = float(os.environ.get("TRADE_SIZE_KRW", "1000000.0"))
+
+    # 수수료
+    FEE_RATE: float = float(os.environ.get("FEE_RATE", "0.0005"))  # 0.05%
+
+    # 리스크
+    MAX_DAILY_LOSS: float = float(os.environ.get("MAX_DAILY_LOSS", "500000.0"))
+    MAX_CONSECUTIVE_LOSSES: int = int(os.environ.get("MAX_CONSECUTIVE_LOSSES", "5"))
+
+    # 전략: Lead-Lag
+    LL_ENTRY_THRESHOLD: float = float(os.environ.get("LL_ENTRY_THRESHOLD", "-0.02"))
+    LL_EXIT_THRESHOLD: float = float(os.environ.get("LL_EXIT_THRESHOLD", "0.005"))
+
+    # 전략: Momentum
+    MOM_LOOKBACK: int = int(os.environ.get("MOM_LOOKBACK", "5"))
+    MOM_VOLUME_MULT: float = float(os.environ.get("MOM_VOLUME_MULT", "1.5"))
+    MOM_TRAIL_PCT: float = float(os.environ.get("MOM_TRAIL_PCT", "0.01"))
+    MOM_STOP_LOSS_PCT: float = float(os.environ.get("MOM_STOP_LOSS_PCT", "0.02"))
+
+    # 서버
+    PORT: int = int(os.environ.get("PORT", "8009"))
+    SIGNAL_HISTORY_SIZE: int = 500

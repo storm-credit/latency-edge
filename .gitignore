@@ -1,3 +1,9 @@
+# Node modules (docs generation)
+docs/node_modules/
+
+# Claude Code local settings
+.claude/settings.local.json
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

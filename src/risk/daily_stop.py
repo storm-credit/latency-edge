@@ -15,4 +15,13 @@ class DailyRiskManager:
 
     def update_result(self, pnl: float):
         """거래 결과 수신 후 내부 상태 갱신"""
-        pass
+        if pnl < 0:
+            self.current_loss += abs(pnl)
+            self.consecutive_losses += 1
+        else:
+            self.consecutive_losses = 0
+
+    def reset_daily(self):
+        """일일 리셋 (매일 장 시작 시 호출)"""
+        self.current_loss = 0.0
+        self.consecutive_losses = 0
