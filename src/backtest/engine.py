@@ -31,6 +31,8 @@ class BacktestEngine:
             if current_position == 0 and self.strategy.should_enter():
                 current_position = self.strategy.position_size()
                 self.strategy.state["in_position"] = True
+                self.strategy.state["entry_price"] = row['price']
+                self.strategy.on_enter()
                 slippage = self.slippage_model.calculate_slippage(
                     order_size=current_position,
                     current_price=row['price'],
@@ -62,6 +64,7 @@ class BacktestEngine:
                 })
                 current_position = 0.0
                 self.strategy.state["in_position"] = False
+                self.strategy.on_exit()
             
             self.equity_curve.append(self.capital)
 

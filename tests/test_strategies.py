@@ -76,9 +76,10 @@ def test_lead_lag_cooldown():
     strategy.on_tick({'upbit_price': 61200, 'binance_price': 60})
     assert strategy.should_exit()
     strategy.state["in_position"] = False
+    strategy.on_exit()  # on_exit()에서 cooldown 설정
 
     # 쿨다운 중 → 재진입 차단
-    # should_exit()에서 cooldown=2 설정, on_tick에서 1씩 감소
+    # on_exit()에서 cooldown=2 설정, on_tick에서 1씩 감소
     strategy.on_tick({'upbit_price': 54000, 'binance_price': 60})
     assert not strategy.should_enter()  # cooldown: 2→1 (on_tick 감소 후 1)
 
@@ -135,6 +136,7 @@ def test_momentum_breakout():
     strategy.on_tick({'price': 110, 'volume': 20})
     assert strategy.should_enter()
     strategy.state["in_position"] = True
+    strategy.on_enter()
 
     # 상승
     strategy.on_tick({'price': 115, 'volume': 15})
@@ -166,6 +168,7 @@ def test_momentum_breakout_stop_loss():
     strategy.on_tick({'price': 110, 'volume': 20})
     assert strategy.should_enter()
     strategy.state["in_position"] = True
+    strategy.on_enter()
 
     # 즉시 급락 → stop loss (110 * 0.97 = 106.7)
     strategy.on_tick({'price': 106, 'volume': 10})
@@ -261,3 +264,59 @@ def test_backtest_engine_basic():
     assert results["total_trades"] == 1
     assert len(results["equity"]) == 7
     assert results["trades"][0]["pnl"] > 0  # 수익 거래
+
+
+# ═══ 추가 커버리지 테스트 ═══
+
+def test_lead_lag_stop_loss():
+    """LeadLag: 진입 후 가격 급락 시 손절"""
+    config = {
+        "entry_threshold": -0.05,
+        "exit_threshold": 0.01,
+        "fx_rate": 1000.0,
+        "min_hold_ticks": 0,
+        "cooldown_ticks": 0,
+        "max_loss_pct": 0.03,  # 3% 손절
+    }
+    strategy = LeadLagScalper(config)
+
+    strategy.on_tick({'upbit_price': 54000, 'binance_price': 60})
+    assert strategy.should_enter()
+    strategy.state["in_position"] = True
+    strategy.state["entry_price"] = 54000
+    strategy.state["_current_local_price"] = 54000
+    strategy.on_enter()
+
+    # 3% 이상 하락 → 손절 (54000 * 0.97 = 52380)
+    strategy.state["_current_local_price"] = 52000
+    assert strategy.should_exit()
+
+
+def test_slippage_default_zero_impact():
+    """SlippageModel: 기본 impact_factor=0이면 base slippage만 적용"""
+    sm = SlippageModel(constant_slippage_bps=2.0, latency_ms=0)
+    slip = sm.calculate_slippage(order_size=1.0, current_price=10000, side="buy")
+    # 2 bps of 10000 = 2.0
+    assert abs(slip - 2.0) < 0.01
+
+
+def test_slippage_negative_volatility_guard():
+    """SlippageModel: 음수 변동성은 0으로 클램핑"""
+    sm = SlippageModel(constant_slippage_bps=2.0, latency_ms=50)
+    slip = sm.calculate_slippage(order_size=1.0, current_price=10000, side="buy", volatility=-0.1)
+    assert slip > 0  # 음수 변동성이 슬리피지를 줄이지 않음
+
+
+def test_risk_manager_breakeven():
+    """DailyRiskManager: 보합(pnl=0)은 수익으로 취급 → 연속 손실 리셋"""
+    rm = DailyRiskManager(max_daily_loss=1000.0, max_consecutive_losses=3)
+    rm.update_result(-1.0)
+    rm.update_result(-1.0)
+    rm.update_result(0.0)  # 보합 → 연속 리셋
+    assert rm.consecutive_losses == 0
+
+
+def test_momentum_position_size_from_config():
+    """MomentumBreakout: config에서 position_size 읽기"""
+    strategy = MomentumBreakout({"lookback": 5, "position_size": 2.5})
+    assert strategy.position_size() == 2.5

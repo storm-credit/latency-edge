@@ -3,8 +3,8 @@ def calculate_imbalance(bids: list, asks: list, levels: int = 5) -> float:
     if not bids or not asks:
         return 0.0
     
-    bid_vol = sum([b[1] for b in bids[:levels]])
-    ask_vol = sum([a[1] for a in asks[:levels]])
+    bid_vol = sum(b[1] for b in bids[:levels])
+    ask_vol = sum(a[1] for a in asks[:levels])
     
     total_vol = bid_vol + ask_vol
     if total_vol == 0:

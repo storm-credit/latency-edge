@@ -1,7 +1,7 @@
 import numpy as np
 
 class SlippageModel:
-    def __init__(self, constant_slippage_bps: float = 2.0, latency_ms: int = 50, impact_factor: float = 0.1):
+    def __init__(self, constant_slippage_bps: float = 2.0, latency_ms: int = 50, impact_factor: float = 0.0):
         # Basis points e.g. 2.0 bps = 0.0002
         self.constant_slippage_bps = constant_slippage_bps
         self.latency_ms = latency_ms
@@ -15,6 +15,7 @@ class SlippageModel:
         - 주문 크기에 비례하는 시장 충격 (market impact)
         """
         base_slippage = current_price * (self.constant_slippage_bps / 10000)
+        volatility = max(volatility, 0.0)  # 음수 방어
         volatility_penalty = current_price * volatility * (self.latency_ms / 1000)
         size_impact = current_price * self.impact_factor * np.log1p(order_size)
 

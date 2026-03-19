@@ -102,6 +102,7 @@ class ApiEngine:
 
                     strategy.state["in_position"] = True
                     strategy.state["entry_price"] = self.market_state["upbit_price"]
+                    strategy.on_enter()
                     trade_krw = min(Config.TRADE_SIZE_KRW, portfolio["KRW"])
                     if trade_krw > 0 and self.market_state["upbit_price"] > 0:
                         trade_krw_after_fee = trade_krw * (1 - Config.FEE_RATE)
@@ -117,6 +118,7 @@ class ApiEngine:
 
                 elif strategy.state.get("in_position", False) and strategy.should_exit():
                     strategy.state["in_position"] = False
+                    strategy.on_exit()
                     # [P0-1] PnL 계산 수정: 실제 KRW 기준 손익
                     krw_before = strategy.state.get("trade_krw", 0.0)
                     krw_after = 0.0
