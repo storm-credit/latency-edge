@@ -1,6 +1,9 @@
 import json
 import asyncio
+import logging
 import websockets
+
+logger = logging.getLogger(__name__)
 
 
 class BinanceCollector:
@@ -18,7 +21,7 @@ class BinanceCollector:
         while True:
             try:
                 async with websockets.connect(self.uri) as websocket:
-                    print(f"[Binance] Connected: {self.uri}")
+                    logger.info(f"[Binance] Connected: {self.uri}")
                     retry_delay = 1
 
                     async for message in websocket:
@@ -27,11 +30,11 @@ class BinanceCollector:
                             await queue.put({"exchange": "binance", "data": parsed_data})
 
             except (websockets.ConnectionClosed, ConnectionError, OSError) as e:
-                print(f"[Binance] Connection lost: {e}. Retry in {retry_delay}s...")
+                logger.warning(f"[Binance] Connection lost: {e}. Retry in {retry_delay}s...")
                 await asyncio.sleep(retry_delay)
                 retry_delay = min(retry_delay * 2, self.MAX_RETRY_DELAY)
             except Exception as e:
-                print(f"[Binance] Unexpected error: {e}. Retry in {retry_delay}s...")
+                logger.error(f"[Binance] Unexpected error: {e}. Retry in {retry_delay}s...")
                 await asyncio.sleep(retry_delay)
                 retry_delay = min(retry_delay * 2, self.MAX_RETRY_DELAY)
 
@@ -50,5 +53,5 @@ class BinanceCollector:
                 }
             return {}
         except Exception as e:
-            print(f"[Binance] Parse error: {e}")
+            logger.warning(f"[Binance] Parse error: {e}")
             return {}

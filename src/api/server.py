@@ -3,8 +3,6 @@ from collections import deque
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 import asyncio
-import json
-import os
 
 from src.collectors.binance_ws import BinanceCollector
 from src.collectors.upbit_ws import UpbitCollector

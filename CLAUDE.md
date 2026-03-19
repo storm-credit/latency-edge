@@ -27,6 +27,13 @@
 - WebSocket broadcast must use dead-list pattern (not remove during iteration)
 - Signal history uses deque(maxlen=500), never unbounded list
 
+## ECC Integration
+- Rules: `.claude/rules/` (common + python + typescript)
+- Skills: `.claude/skills/` (14 skills — TDD, security, patterns, etc.)
+- Agents: `.claude/agents/` (6 — planner, code-reviewer, security-reviewer, etc.)
+- Commands: `.claude/commands/` (9 — /plan, /tdd, /code-review, etc.)
+- Hooks: `.claude/hooks/` (post-edit Python lint, stop-phase debug check)
+
 ## Testing
 - Test framework: pytest + pytest-asyncio
 - Run: `python -m pytest tests/ -v`

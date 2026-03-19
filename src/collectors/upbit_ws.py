@@ -1,7 +1,10 @@
 import json
 import asyncio
+import logging
 import uuid
 import websockets
+
+logger = logging.getLogger(__name__)
 
 
 class UpbitCollector:
@@ -23,7 +26,7 @@ class UpbitCollector:
             try:
                 async with websockets.connect(self.uri) as websocket:
                     await websocket.send(json.dumps(subscribe_fmt))
-                    print(f"[Upbit] Connected: {self.symbols}")
+                    logger.info(f"[Upbit] Connected: {self.symbols}")
                     retry_delay = 1
 
                     async for message in websocket:
@@ -32,11 +35,11 @@ class UpbitCollector:
                             await queue.put({"exchange": "upbit", "data": parsed_data})
 
             except (websockets.ConnectionClosed, ConnectionError, OSError) as e:
-                print(f"[Upbit] Connection lost: {e}. Retry in {retry_delay}s...")
+                logger.warning(f"[Upbit] Connection lost: {e}. Retry in {retry_delay}s...")
                 await asyncio.sleep(retry_delay)
                 retry_delay = min(retry_delay * 2, self.MAX_RETRY_DELAY)
             except Exception as e:
-                print(f"[Upbit] Unexpected error: {e}. Retry in {retry_delay}s...")
+                logger.error(f"[Upbit] Unexpected error: {e}. Retry in {retry_delay}s...")
                 await asyncio.sleep(retry_delay)
                 retry_delay = min(retry_delay * 2, self.MAX_RETRY_DELAY)
 
@@ -55,5 +58,5 @@ class UpbitCollector:
                 }
             return {}
         except Exception as e:
-            print(f"[Upbit] Parse error: {e}")
+            logger.warning(f"[Upbit] Parse error: {e}")
             return {}

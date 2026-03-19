@@ -2,12 +2,15 @@ import pandas as pd
 from typing import Any, Dict, List
 from src.strategies.base import BaseStrategy
 from src.backtest.slippage import SlippageModel
+from src.config import Config
 
 class BacktestEngine:
-    def __init__(self, strategy: BaseStrategy, slippage_model: SlippageModel, initial_capital: float = 10000.0):
+    def __init__(self, strategy: BaseStrategy, slippage_model: SlippageModel,
+                 initial_capital: float = 10000.0, fee_rate: float = Config.FEE_RATE):
         self.strategy = strategy
         self.slippage_model = slippage_model
         self.capital = initial_capital
+        self.fee_rate = fee_rate
         self.trades: List[Dict[str, Any]] = []
         self.equity_curve: List[float] = []
 
@@ -34,7 +37,8 @@ class BacktestEngine:
                     side='buy',
                     volatility=row.get('volatility', 0.0)
                 )
-                entry_price = row['price'] + slippage
+                # 매수 시 fee 적용 (슬리피지 + 수수료)
+                entry_price = (row['price'] + slippage) * (1 + self.fee_rate)
                 entry_time = idx
 
             elif current_position > 0 and self.strategy.should_exit():
@@ -44,7 +48,8 @@ class BacktestEngine:
                     side='sell',
                     volatility=row.get('volatility', 0.0)
                 )
-                exit_price = row['price'] - slippage
+                # 매도 시 fee 적용 (슬리피지 + 수수료)
+                exit_price = (row['price'] - slippage) * (1 - self.fee_rate)
 
                 pnl = (exit_price - entry_price) * current_position
                 self.capital += pnl
