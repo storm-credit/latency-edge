@@ -9,6 +9,7 @@ from src.collectors.upbit_ws import UpbitCollector
 from src.strategies.lead_lag_scalper import LeadLagScalper
 from src.strategies.momentum_breakout import MomentumBreakout
 from src.risk.daily_stop import DailyRiskManager
+from src.risk.position_sizer import KellyPositionSizer
 from src.config import Config
 
 
@@ -47,6 +48,11 @@ class ApiEngine:
         )
         self.subscribers: set[WebSocket] = set()
         self.latest_signals: deque = deque(maxlen=Config.SIGNAL_HISTORY_SIZE)
+        # Kelly 포지션 사이저 (전략 공유)
+        self.position_sizer = KellyPositionSizer(
+            max_fraction=Config.KELLY_MAX_FRACTION,
+            min_trades=Config.KELLY_MIN_TRADES,
+        ) if Config.KELLY_ENABLED else None
 
     async def broadcast(self, message: dict):
         # [P0-4] 레이스 컨디션 수정: discard 사용 + 모든 예외 처리
@@ -103,7 +109,11 @@ class ApiEngine:
                     strategy.state["in_position"] = True
                     strategy.state["entry_price"] = self.market_state["upbit_price"]
                     strategy.on_enter()
-                    trade_krw = min(Config.TRADE_SIZE_KRW, portfolio["KRW"])
+                    # Kelly 사이저 또는 고정 사이즈
+                    if self.position_sizer:
+                        trade_krw = self.position_sizer.get_trade_size(portfolio["KRW"])
+                    else:
+                        trade_krw = min(Config.TRADE_SIZE_KRW, portfolio["KRW"])
                     if trade_krw > 0 and self.market_state["upbit_price"] > 0:
                         trade_krw_after_fee = trade_krw * (1 - Config.FEE_RATE)
                         btc_qty = trade_krw_after_fee / self.market_state["upbit_price"]
@@ -134,6 +144,8 @@ class ApiEngine:
                     # 실제 KRW 손익 (투입금 대비 회수금)
                     pnl = krw_after - krw_before
                     self.risk_manager.update_result(pnl)
+                    if self.position_sizer:
+                        self.position_sizer.update(pnl)
 
                     signal = {"type": "signal", "strategy": name, "action": "EXIT", "local": self.market_state["upbit_price"], "global": self.market_state["binance_price"], "pnl": pnl}
                     self.latest_signals.append(signal)
@@ -151,7 +163,7 @@ app = FastAPI(title="Latency Edge API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["http://localhost:3000", "http://localhost:3100"],
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],

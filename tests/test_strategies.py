@@ -4,8 +4,11 @@ import pandas as pd
 from src.strategies.lead_lag_scalper import LeadLagScalper
 from src.strategies.momentum_breakout import MomentumBreakout
 from src.risk.daily_stop import DailyRiskManager
+from src.risk.position_sizer import KellyPositionSizer
 from src.backtest.slippage import SlippageModel
 from src.backtest.engine import BacktestEngine
+from src.features.ou_calibration import OUCalibrator
+from src.features.atr import ATRCalculator
 
 
 # ═══ Lead-Lag Scalper ═══
@@ -320,3 +323,142 @@ def test_momentum_position_size_from_config():
     """MomentumBreakout: config에서 position_size 읽기"""
     strategy = MomentumBreakout({"lookback": 5, "position_size": 2.5})
     assert strategy.position_size() == 2.5
+
+
+# ═══ OU Calibrator ═══
+
+def test_ou_calibrator_mean_reverting():
+    """OU: 평균 회귀 시계열에서 z-score 정상 계산"""
+    ou = OUCalibrator(lookback=50)
+    np.random.seed(42)
+    # OU 시뮬레이션: mu=0, theta=0.5
+    s = 0.0
+    for _ in range(50):
+        s += 0.5 * (0.0 - s) + np.random.normal(0, 0.01)
+        ou.update(s)
+
+    assert ou.is_mean_reverting()
+    zscore = ou.get_zscore(s)
+    assert zscore is not None
+    assert -5.0 < zscore < 5.0
+
+
+def test_ou_calibrator_insufficient_data():
+    """OU: 데이터 부족 시 None 반환"""
+    ou = OUCalibrator(lookback=60)
+    for i in range(5):
+        ou.update(float(i) * 0.01)
+    assert ou.get_zscore(0.05) is None
+    assert not ou.is_mean_reverting()
+
+
+def test_ou_leadlag_fallback():
+    """LeadLag: OU 데이터 부족 시 기존 고정 임계값으로 폴백"""
+    config = {
+        "entry_threshold": -0.05,
+        "exit_threshold": 0.01,
+        "fx_rate": 1000.0,
+        "min_hold_ticks": 0,
+        "cooldown_ticks": 0,
+        "ou_lookback": 100,  # 높게 설정 → OU 캘리브레이션 안 됨
+    }
+    strategy = LeadLagScalper(config)
+
+    # 5틱만 → OU 미활성 → 고정 임계값 폴백
+    strategy.on_tick({'upbit_price': 54000, 'binance_price': 60})
+    assert strategy.should_enter()  # -10% < -5% → 진입
+
+
+# ═══ ATR Calculator ═══
+
+def test_atr_basic():
+    """ATR: 일정 변동 시 ATR 계산"""
+    atr = ATRCalculator(period=3)
+    prices = [100, 102, 98, 103, 97]
+    for p in prices:
+        atr.update(p)
+    val = atr.get_atr()
+    assert val is not None
+    assert val > 0
+
+
+def test_atr_pct():
+    """ATR: 가격 대비 ATR 비율"""
+    atr = ATRCalculator(period=3)
+    for p in [100, 101, 99, 102]:
+        atr.update(p)
+    pct = atr.get_atr_pct(100)
+    assert pct is not None
+    assert 0 < pct < 0.1  # 합리적 범위
+
+
+def test_atr_insufficient_data():
+    """ATR: 데이터 부족 시 None"""
+    atr = ATRCalculator(period=14)
+    atr.update(100)
+    atr.update(101)
+    assert atr.get_atr() is None
+
+
+def test_momentum_atr_dynamic_stop():
+    """Momentum: ATR 활성 시 동적 스탑 사용"""
+    config = {
+        "lookback": 3, "volume_multiplier": 1.5,
+        "trail_pct": 0.01, "stop_loss_pct": 0.02,
+        "min_hold_ticks": 0, "atr_period": 3,
+        "atr_trail_mult": 2.0, "atr_stop_mult": 1.5,
+    }
+    strategy = MomentumBreakout(config)
+
+    # ATR이 계산되면 동적 스탑 사용
+    strategy.on_tick({'price': 100, 'volume': 10})
+    strategy.on_tick({'price': 105, 'volume': 12})
+    strategy.on_tick({'price': 102, 'volume': 11})
+    strategy.on_tick({'price': 110, 'volume': 20})
+    assert strategy.should_enter()
+    strategy.state["in_position"] = True
+    strategy.on_enter()
+
+    # ATR 기반 스탑이 고정 스탑과 다른 값인지 확인
+    dynamic_stop = strategy._get_stop_loss_pct()
+    dynamic_trail = strategy._get_trail_pct()
+    assert dynamic_stop != strategy.stop_loss_pct or dynamic_trail != strategy.trail_pct
+
+
+# ═══ Kelly Position Sizer ═══
+
+def test_kelly_fallback_insufficient_trades():
+    """Kelly: 최소 거래 미달 시 고정 사이즈 폴백"""
+    sizer = KellyPositionSizer(max_fraction=0.25, min_trades=10)
+    # 5거래만 기록 → 폴백
+    for _ in range(5):
+        sizer.update(1000.0)
+    size = sizer.get_trade_size(5000000.0)
+    assert size == min(1000000.0, 5000000.0)  # Config.TRADE_SIZE_KRW 폴백
+
+
+def test_kelly_winning_strategy():
+    """Kelly: 높은 승률 → 큰 포지션"""
+    sizer = KellyPositionSizer(max_fraction=0.25, min_trades=5)
+    # 8승 2패
+    for _ in range(8):
+        sizer.update(50000.0)   # 5만원 수익
+    for _ in range(2):
+        sizer.update(-20000.0)  # 2만원 손실
+    size = sizer.get_trade_size(5000000.0)
+    # Kelly가 활성화되고, 고정 100만원보다 클 수 있음
+    assert size > 0
+    assert size <= 5000000.0 * 0.25  # max_fraction 제한
+
+
+def test_kelly_losing_strategy():
+    """Kelly: 낮은 승률 → 최소 포지션"""
+    sizer = KellyPositionSizer(max_fraction=0.25, min_trades=5)
+    # 2승 8패
+    for _ in range(2):
+        sizer.update(10000.0)
+    for _ in range(8):
+        sizer.update(-50000.0)
+    size = sizer.get_trade_size(5000000.0)
+    # Kelly f* 음수 → 최소 5% 클램프
+    assert size >= 100000  # 최소 10만원

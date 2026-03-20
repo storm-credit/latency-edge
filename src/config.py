@@ -27,6 +27,21 @@ class Config:
     MOM_TRAIL_PCT: float = float(os.environ.get("MOM_TRAIL_PCT", "0.01"))
     MOM_STOP_LOSS_PCT: float = float(os.environ.get("MOM_STOP_LOSS_PCT", "0.02"))
 
+    # OU 모델 (김프 동적 임계값)
+    OU_LOOKBACK: int = int(os.environ.get("OU_LOOKBACK", "60"))
+    OU_ENTRY_ZSCORE: float = float(os.environ.get("OU_ENTRY_ZSCORE", "-2.0"))
+    OU_EXIT_ZSCORE: float = float(os.environ.get("OU_EXIT_ZSCORE", "0.0"))
+
+    # ATR (동적 스탑)
+    ATR_PERIOD: int = int(os.environ.get("ATR_PERIOD", "14"))
+    ATR_TRAIL_MULT: float = float(os.environ.get("ATR_TRAIL_MULT", "2.0"))
+    ATR_STOP_MULT: float = float(os.environ.get("ATR_STOP_MULT", "1.5"))
+
+    # Kelly 포지션 사이징
+    KELLY_ENABLED: bool = os.environ.get("KELLY_ENABLED", "true").lower() == "true"
+    KELLY_MIN_TRADES: int = int(os.environ.get("KELLY_MIN_TRADES", "10"))
+    KELLY_MAX_FRACTION: float = float(os.environ.get("KELLY_MAX_FRACTION", "0.25"))
+
     # 서버
     PORT: int = int(os.environ.get("PORT", "8009"))
     SIGNAL_HISTORY_SIZE: int = 500
