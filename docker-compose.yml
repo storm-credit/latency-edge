@@ -1,0 +1,22 @@
+services:
+  backend:
+    build:
+      context: .
+      target: backend
+    ports:
+      - "8009:8009"
+    environment:
+      - FX_RATE=1400.0
+      - CAPITAL_PER_STRATEGY=5000000.0
+      - PORT=8009
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      target: frontend
+    ports:
+      - "3100:3000"
+    depends_on:
+      - backend
+    restart: unless-stopped
