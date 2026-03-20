@@ -11,6 +11,9 @@ from src.features.ou_calibration import OUCalibrator
 from src.features.atr import ATRCalculator
 from src.features.donchian import DonchianChannel, DonchianEnsemble
 from src.features.regime import RegimeDetector
+from src.features.volume_filter import VolumePercentileFilter
+from src.features.vwap import VWAPCalculator
+from src.features.trade_flow import TradeFlowImbalance
 
 
 # ═══ Lead-Lag Scalper ═══
@@ -547,3 +550,85 @@ def test_regime_multipliers_in_momentum():
     # 레짐 감지기가 존재하는지 확인
     assert hasattr(strategy, 'regime')
     assert strategy.regime.regime == RegimeDetector.NORMAL
+
+
+# ═══ Volume Percentile Filter ═══
+
+def test_volume_percentile_surge():
+    """VolumePercentileFilter: 90th 퍼센타일 이상 시 surge"""
+    vf = VolumePercentileFilter(window=10, threshold_pct=90.0)
+    # 10개 거래량: 1~10
+    for v in range(1, 11):
+        vf.update(float(v))
+    assert vf.ready
+    assert vf.is_surge(15.0)    # 15 > 90th pct of [1..10]
+    assert not vf.is_surge(5.0)  # 5 < 90th pct
+
+
+def test_volume_percentile_not_ready():
+    """VolumePercentileFilter: 데이터 부족 시 False"""
+    vf = VolumePercentileFilter(window=50)
+    vf.update(100.0)
+    assert not vf.ready
+    assert not vf.is_surge(200.0)
+
+
+# ═══ VWAP ═══
+
+def test_vwap_basic():
+    """VWAP: 기본 계산"""
+    vw = VWAPCalculator(window=20)
+    # 가격 100, 거래량 10 × 10틱
+    for _ in range(10):
+        vw.update(100.0, 10.0)
+    assert vw.ready
+    vwap = vw.get_vwap()
+    assert vwap is not None
+    assert abs(vwap - 100.0) < 0.01
+
+
+def test_vwap_deviation():
+    """VWAP: 이탈도 계산"""
+    vw = VWAPCalculator(window=20)
+    for _ in range(10):
+        vw.update(100.0, 10.0)
+    dev = vw.get_deviation(105.0)
+    assert dev is not None
+    assert abs(dev - 0.05) < 0.001  # 5% 위
+    assert vw.is_above_vwap(105.0)
+    assert vw.is_below_vwap(95.0, threshold=-0.04)
+
+
+# ═══ Trade Flow Imbalance ═══
+
+def test_tfi_buying_pressure():
+    """TFI: 연속 상승 시 매수 압력"""
+    tfi = TradeFlowImbalance(window=5)
+    prices = [100, 101, 102, 103, 104, 105]
+    for p in prices:
+        tfi.update(float(p), 10.0)
+    assert tfi.ready
+    assert tfi.is_buying_pressure(threshold=0.3)
+    assert not tfi.is_selling_pressure()
+
+
+def test_tfi_selling_pressure():
+    """TFI: 연속 하락 시 매도 압력"""
+    tfi = TradeFlowImbalance(window=5)
+    prices = [105, 104, 103, 102, 101, 100]
+    for p in prices:
+        tfi.update(float(p), 10.0)
+    assert tfi.ready
+    assert tfi.is_selling_pressure(threshold=-0.3)
+    assert not tfi.is_buying_pressure()
+
+
+def test_tfi_neutral():
+    """TFI: 혼합 시 중립"""
+    tfi = TradeFlowImbalance(window=6)
+    prices = [100, 101, 100, 101, 100, 101, 100]
+    for p in prices:
+        tfi.update(float(p), 10.0)
+    tfi_val = tfi.get_tfi()
+    assert tfi_val is not None
+    assert abs(tfi_val) < 0.5  # 중립 근처

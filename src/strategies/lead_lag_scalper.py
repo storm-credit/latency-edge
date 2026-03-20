@@ -4,6 +4,8 @@ from src.features.imbalance import calculate_premium
 from src.features.ou_calibration import OUCalibrator
 from src.features.atr import ATRCalculator
 from src.features.regime import RegimeDetector
+from src.features.vwap import VWAPCalculator
+from src.features.trade_flow import TradeFlowImbalance
 from src.config import Config
 
 
@@ -44,6 +46,10 @@ class LeadLagScalper(BaseStrategy):
             slow_span=config.get("regime_slow", Config.REGIME_SLOW_SPAN),
         )
 
+        # VWAP + TFI (보조 진입 확인)
+        self.vwap = VWAPCalculator(window=config.get("vwap_window", 50))
+        self.tfi = TradeFlowImbalance(window=config.get("tfi_window", 20))
+
         self.state: Dict[str, Any] = {
             "current_premium": 0.0,
             "in_position": False,
@@ -62,10 +68,13 @@ class LeadLagScalper(BaseStrategy):
             # OU 캘리브레이터에 프리미엄 피드
             self.ou.update(premium)
 
-        # ATR + 레짐 업데이트 (업비트 가격 기준)
+        # ATR + 레짐 + VWAP + TFI 업데이트
         if local_price > 0:
+            volume = market_state.get('volume', 0.0)
             self.atr.update(local_price)
             self.regime.update(local_price)
+            self.vwap.update(local_price, volume)
+            self.tfi.update(local_price, volume)
 
         # 보유 중이면 틱 카운트 증가
         if self.state["in_position"]:
@@ -76,17 +85,26 @@ class LeadLagScalper(BaseStrategy):
             self.state["cooldown_remaining"] -= 1
 
     def should_enter(self) -> bool:
-        """OU z-score 기반 진입 판정 (폴백: 고정 임계값)"""
+        """OU z-score + TFI 보조 진입 판정"""
         if self.state["cooldown_remaining"] > 0:
             return False
 
+        # 프리미엄 조건 (OU 또는 폴백)
         zscore = self.ou.get_zscore(self.state["current_premium"])
         if zscore is not None and self.ou.is_mean_reverting():
-            # OU 모델 활성 → z-score 기반 진입
-            return zscore <= self.ou_entry_z
+            premium_ok = zscore <= self.ou_entry_z
         else:
-            # 폴백 → 기존 고정 임계값
-            return self.state["current_premium"] <= self.entry_threshold
+            premium_ok = self.state["current_premium"] <= self.entry_threshold
+
+        if not premium_ok:
+            return False
+
+        # TFI 보조: 매수 압력이 강하면 이미 반등 중 → 스킵
+        # (역프리미엄 + 매도 압력 = 가격 회복 가능성 높음 → 좋은 진입)
+        if self.tfi.ready and self.tfi.is_buying_pressure(threshold=0.5):
+            return False  # 이미 반등 시작 → 늦은 진입 방지
+
+        return True
 
     def should_exit(self) -> bool:
         """OU z-score 기반 청산 판정 + ATR 손절"""

@@ -4,6 +4,9 @@ from src.strategies.base import BaseStrategy
 from src.features.atr import ATRCalculator
 from src.features.donchian import DonchianEnsemble
 from src.features.regime import RegimeDetector
+from src.features.volume_filter import VolumePercentileFilter
+from src.features.vwap import VWAPCalculator
+from src.features.trade_flow import TradeFlowImbalance
 from src.config import Config
 
 
@@ -11,10 +14,13 @@ class MomentumBreakout(BaseStrategy):
     """
     최근 N틱의 고점을 돌파할 때 강한 모멘텀(거래량 동반)으로 진입하는 전략
 
-    v3 개선 (논문 기반):
+    v4 개선 (논문 기반):
     - Donchian 앙상블: 다중 기간 채널 투표로 노이즈 필터링
     - ATR 기반 동적 트레일링 스탑
     - EWMA 레짐 감지: 고변동성 시 스탑 확대 + 포지션 축소
+    - 거래량 퍼센타일 필터: 90th 퍼센타일 이상만 진입
+    - VWAP 확인: 가격이 VWAP 위일 때만 돌파 진입 허용
+    - Trade Flow Imbalance: 매수 압력 확인으로 허위 돌파 필터링
 
     논문:
     - "Catching Crypto Trends" (Zarattini et al., 2025) — Donchian + ATR
@@ -45,6 +51,18 @@ class MomentumBreakout(BaseStrategy):
             slow_span=config.get("regime_slow", Config.REGIME_SLOW_SPAN),
         )
 
+        # 거래량 퍼센타일 필터
+        self.vol_filter = VolumePercentileFilter(
+            window=config.get("vol_filter_window", 50),
+            threshold_pct=config.get("vol_filter_pct", 90.0),
+        )
+
+        # VWAP 계산기
+        self.vwap = VWAPCalculator(window=config.get("vwap_window", 50))
+
+        # Trade Flow Imbalance
+        self.tfi = TradeFlowImbalance(window=config.get("tfi_window", 20))
+
         self.state: Dict[str, Any] = {
             "price_history": deque(maxlen=self.lookback),
             "volume_history": deque(maxlen=self.lookback),
@@ -70,6 +88,9 @@ class MomentumBreakout(BaseStrategy):
             self.atr.update(price)
             self.donchian.update(price)
             self.regime.update(price)
+            self.vol_filter.update(volume)
+            self.vwap.update(price, volume)
+            self.tfi.update(price, volume)
 
             if self.state["in_position"]:
                 self.state["ticks_in_position"] += 1
@@ -94,12 +115,26 @@ class MomentumBreakout(BaseStrategy):
             if price <= recent_high:
                 return False
 
-        # 거래량 확인
-        vol_history = list(self.state["volume_history"])
-        avg_vol = sum(vol_history[:-1]) / (self.lookback - 1)
-        volume_breakout = self.state["current_volume"] > (avg_vol * self.volume_multiplier)
+        # 거래량 확인: 퍼센타일 필터 우선, 폴백으로 고정 배수
+        volume = self.state["current_volume"]
+        if self.vol_filter.ready:
+            if not self.vol_filter.is_surge(volume):
+                return False
+        else:
+            vol_history = list(self.state["volume_history"])
+            avg_vol = sum(vol_history[:-1]) / (self.lookback - 1)
+            if volume <= avg_vol * self.volume_multiplier:
+                return False
 
-        return volume_breakout
+        # VWAP 확인: 가격이 VWAP 위여야 진입 (모멘텀 확인)
+        if self.vwap.ready and not self.vwap.is_above_vwap(price, threshold=0.0):
+            return False
+
+        # TFI 확인: 매수 압력 있어야 진입 (허위 돌파 필터)
+        if self.tfi.ready and self.tfi.is_selling_pressure():
+            return False
+
+        return True
 
     def _get_stop_loss_pct(self) -> float:
         """ATR × 레짐 배수 기반 동적 손절"""
