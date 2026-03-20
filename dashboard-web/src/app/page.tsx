@@ -25,6 +25,7 @@ export default function Dashboard() {
   const chartRef = useRef<HTMLDivElement>(null);
   const chart = useRef<IChartApi | null>(null);
   const areaSeries = useRef<ISeriesApi<"Area"> | null>(null);
+  const lastChartTime = useRef<number>(0);
   const [equityHistory, setEquityHistory] = useState<number[]>([10000000]);
 
   const [m, setM] = useState<MarketState>({ upbit_price: 0, binance_price: 0, price: 0, volume: 0 });
@@ -44,8 +45,8 @@ export default function Dashboard() {
       width: chartRef.current.clientWidth, height: chartRef.current.clientHeight,
       layout: { background: { color: "transparent" }, textColor: "#5a5a66", fontSize: 11, fontFamily: "JetBrains Mono, monospace" },
       grid: { vertLines: { visible: false }, horzLines: { color: "rgba(255,255,255,0.03)" } },
-      timeScale: { timeVisible: true, secondsVisible: false, borderVisible: false, rightOffset: 3 },
-      rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.08, bottom: 0.08 } },
+      timeScale: { timeVisible: true, secondsVisible: true, borderVisible: false, rightOffset: 5, minBarSpacing: 3 },
+      rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.15, bottom: 0.15 }, autoScale: true },
       crosshair: {
         vertLine: { color: "rgba(59,130,246,0.4)", width: 1, style: 2, labelVisible: false },
         horzLine: { color: "rgba(59,130,246,0.4)", width: 1, style: 2, labelBackgroundColor: "#3b82f6" },
@@ -95,7 +96,12 @@ export default function Dashboard() {
             }
             if (d.fx_rate) setFxRate(d.fx_rate);
             if (areaSeries.current && d.state.upbit_price > 0) {
-              try { areaSeries.current.update({ time: Math.floor(Date.now() / 1000) as any, value: d.state.upbit_price }); } catch {}
+              const t = Math.floor(Date.now() / 1000);
+              // lightweight-charts는 시간이 단조 증가해야 함 — 중복 방지
+              if (t > lastChartTime.current) {
+                lastChartTime.current = t;
+                try { areaSeries.current.update({ time: t as any, value: d.state.upbit_price }); } catch {}
+              }
             }
           } else if (d.type === "signal") {
             setSigs(prev => [{ ...d, ts: Date.now() }, ...prev].slice(0, 100));
