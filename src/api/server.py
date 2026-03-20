@@ -109,11 +109,14 @@ class ApiEngine:
                     strategy.state["in_position"] = True
                     strategy.state["entry_price"] = self.market_state["upbit_price"]
                     strategy.on_enter()
-                    # Kelly 사이저 또는 고정 사이즈
+                    # Kelly 사이저 또는 고정 사이즈 + 레짐 배수 적용
                     if self.position_sizer:
                         trade_krw = self.position_sizer.get_trade_size(portfolio["KRW"])
                     else:
                         trade_krw = min(Config.TRADE_SIZE_KRW, portfolio["KRW"])
+                    # 레짐 기반 포지션 조절 (고변동성 → 축소)
+                    if hasattr(strategy, 'regime'):
+                        trade_krw *= strategy.regime.get_position_multiplier()
                     if trade_krw > 0 and self.market_state["upbit_price"] > 0:
                         trade_krw_after_fee = trade_krw * (1 - Config.FEE_RATE)
                         btc_qty = trade_krw_after_fee / self.market_state["upbit_price"]

@@ -37,6 +37,13 @@ class Config:
     ATR_TRAIL_MULT: float = float(os.environ.get("ATR_TRAIL_MULT", "2.0"))
     ATR_STOP_MULT: float = float(os.environ.get("ATR_STOP_MULT", "1.5"))
 
+    # Donchian 앙상블
+    DONCHIAN_PERIODS: list = [5, 10, 20]
+
+    # EWMA 레짐 감지
+    REGIME_FAST_SPAN: int = int(os.environ.get("REGIME_FAST_SPAN", "10"))
+    REGIME_SLOW_SPAN: int = int(os.environ.get("REGIME_SLOW_SPAN", "50"))
+
     # Kelly 포지션 사이징
     KELLY_ENABLED: bool = os.environ.get("KELLY_ENABLED", "true").lower() == "true"
     KELLY_MIN_TRADES: int = int(os.environ.get("KELLY_MIN_TRADES", "10"))

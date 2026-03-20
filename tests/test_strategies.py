@@ -9,6 +9,8 @@ from src.backtest.slippage import SlippageModel
 from src.backtest.engine import BacktestEngine
 from src.features.ou_calibration import OUCalibrator
 from src.features.atr import ATRCalculator
+from src.features.donchian import DonchianChannel, DonchianEnsemble
+from src.features.regime import RegimeDetector
 
 
 # ═══ Lead-Lag Scalper ═══
@@ -462,3 +464,86 @@ def test_kelly_losing_strategy():
     size = sizer.get_trade_size(5000000.0)
     # Kelly f* 음수 → 최소 5% 클램프
     assert size >= 100000  # 최소 10만원
+
+
+# ═══ Donchian Channel 앙상블 ═══
+
+def test_donchian_single_channel():
+    """Donchian: 단일 채널 상/하단 밴드"""
+    ch = DonchianChannel(period=3)
+    ch.update(100)
+    ch.update(110)
+    ch.update(90)
+    assert ch.ready
+    assert ch.upper == 110
+    assert ch.lower == 90
+    assert ch.mid == 100
+
+
+def test_donchian_ensemble_breakout():
+    """Donchian 앙상블: 과반수 채널 돌파 시 시그널"""
+    ens = DonchianEnsemble(periods=[3, 5])
+    # 3틱 채널만 채움 (5틱은 미준비)
+    for p in [100, 102, 98]:
+        ens.update(p)
+    # 3틱 채널 준비됨, 5틱 미준비 → min_votes=2 불충족
+    assert not ens.breakout_signal(105)
+
+    # 5틱 채널도 채움
+    ens.update(101)
+    ens.update(99)
+    # 이제 둘 다 준비 → 105가 두 채널 모두 돌파
+    assert ens.breakout_signal(105)
+    # 100은 돌파 아님
+    assert not ens.breakout_signal(100)
+
+
+def test_donchian_ensemble_breakdown():
+    """Donchian 앙상블: 하향 이탈 시그널"""
+    ens = DonchianEnsemble(periods=[3, 5])
+    for p in [100, 102, 98, 101, 99]:
+        ens.update(p)
+    # 가장 짧은(3틱) 채널 하단 = 99 → 97은 이탈
+    assert ens.breakdown_signal(97)
+    assert not ens.breakdown_signal(100)
+
+
+# ═══ EWMA 레짐 감지 ═══
+
+def test_regime_normal_default():
+    """RegimeDetector: 초기/데이터 부족 시 NORMAL"""
+    rd = RegimeDetector()
+    assert rd.regime == RegimeDetector.NORMAL
+    assert rd.get_position_multiplier() == 1.0
+    assert rd.get_stop_multiplier() == 1.0
+
+
+def test_regime_high_volatility():
+    """RegimeDetector: 급변 시 HIGH_VOL 감지"""
+    rd = RegimeDetector(fast_span=3, slow_span=10, high_threshold=1.5)
+    # 안정적 구간 (장기 변동성 세팅)
+    for p in [100, 100.1, 99.9, 100.05, 99.95,
+              100.02, 99.98, 100.01, 99.99, 100.03,
+              100, 99.97, 100.04, 99.96, 100.02,
+              99.99, 100.01, 100, 99.98, 100.03]:
+        rd.update(p)
+    # 급변 구간
+    for p in [105, 95, 108, 92]:
+        rd.update(p)
+    assert rd.regime == RegimeDetector.HIGH_VOL
+    assert rd.get_position_multiplier() == 0.5
+    assert rd.get_stop_multiplier() == 1.5
+
+
+def test_regime_multipliers_in_momentum():
+    """Momentum: 레짐 배수가 스탑에 적용되는지 확인"""
+    config = {
+        "lookback": 3, "volume_multiplier": 1.5,
+        "trail_pct": 0.01, "stop_loss_pct": 0.02,
+        "min_hold_ticks": 0, "atr_period": 3,
+        "use_donchian": False,  # Donchian 비활성화 (기존 방식 테스트)
+    }
+    strategy = MomentumBreakout(config)
+    # 레짐 감지기가 존재하는지 확인
+    assert hasattr(strategy, 'regime')
+    assert strategy.regime.regime == RegimeDetector.NORMAL

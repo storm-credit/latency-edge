@@ -3,6 +3,7 @@ from src.strategies.base import BaseStrategy
 from src.features.imbalance import calculate_premium
 from src.features.ou_calibration import OUCalibrator
 from src.features.atr import ATRCalculator
+from src.features.regime import RegimeDetector
 from src.config import Config
 
 
@@ -37,6 +38,12 @@ class LeadLagScalper(BaseStrategy):
         self.atr = ATRCalculator(period=atr_period)
         self.atr_stop_mult = config.get("atr_stop_mult", Config.ATR_STOP_MULT)
 
+        # EWMA 레짐 감지
+        self.regime = RegimeDetector(
+            fast_span=config.get("regime_fast", Config.REGIME_FAST_SPAN),
+            slow_span=config.get("regime_slow", Config.REGIME_SLOW_SPAN),
+        )
+
         self.state: Dict[str, Any] = {
             "current_premium": 0.0,
             "in_position": False,
@@ -55,9 +62,10 @@ class LeadLagScalper(BaseStrategy):
             # OU 캘리브레이터에 프리미엄 피드
             self.ou.update(premium)
 
-        # ATR 업데이트 (업비트 가격 기준)
+        # ATR + 레짐 업데이트 (업비트 가격 기준)
         if local_price > 0:
             self.atr.update(local_price)
+            self.regime.update(local_price)
 
         # 보유 중이면 틱 카운트 증가
         if self.state["in_position"]:
@@ -91,7 +99,8 @@ class LeadLagScalper(BaseStrategy):
         # ATR 기반 동적 손절 (데이터 있으면 ATR 사용, 없으면 고정 %)
         if entry > 0:
             atr_pct = self.atr.get_atr_pct(entry)
-            stop_pct = (self.atr_stop_mult * atr_pct) if atr_pct is not None else self.max_loss_pct
+            base_stop = (self.atr_stop_mult * atr_pct) if atr_pct is not None else self.max_loss_pct
+            stop_pct = base_stop * self.regime.get_stop_multiplier()
             # 손절 판정
             current_local = self.state.get("_current_local_price", entry)
             if current_local <= entry * (1 - stop_pct):
