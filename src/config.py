@@ -49,6 +49,11 @@ class Config:
     KELLY_MIN_TRADES: int = int(os.environ.get("KELLY_MIN_TRADES", "10"))
     KELLY_MAX_FRACTION: float = float(os.environ.get("KELLY_MAX_FRACTION", "0.25"))
 
+    # 다중 코인 (빗각)
+    MULTI_COIN_ENABLED: bool = os.environ.get("MULTI_COIN_ENABLED", "true").lower() == "true"
+    MULTI_MAX_POSITIONS: int = int(os.environ.get("MULTI_MAX_POSITIONS", "3"))
+    MULTI_MIN_VOLUME_KRW: float = float(os.environ.get("MULTI_MIN_VOLUME_KRW", "10000000000"))  # 일 100억
+
     # 서버
     PORT: int = int(os.environ.get("PORT", "8009"))
     SIGNAL_HISTORY_SIZE: int = 500

@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 from src.strategies.lead_lag_scalper import LeadLagScalper
 from src.strategies.momentum_breakout import MomentumBreakout
+from src.strategies.multi_premium import MultiPremiumStrategy, CoinPremiumState
 from src.risk.daily_stop import DailyRiskManager
 from src.risk.position_sizer import KellyPositionSizer
 from src.backtest.slippage import SlippageModel
@@ -632,3 +633,88 @@ def test_tfi_neutral():
     tfi_val = tfi.get_tfi()
     assert tfi_val is not None
     assert abs(tfi_val) < 0.5  # 중립 근처
+
+
+# ═══ Multi-Premium (빗각) ═══
+
+def test_multi_premium_entry_candidates():
+    """MultiPremium: 역프리미엄 코인 진입 후보 선정"""
+    strategy = MultiPremiumStrategy(
+        symbols=["BTC", "ETH", "XRP"],
+        config={"fx_rate": 1000.0, "entry_threshold": -0.05, "max_positions": 2}
+    )
+
+    # BTC: 정프리미엄 (진입 안 함)
+    strategy.on_tick("BTC", "upbit", 61000)
+    strategy.on_tick("BTC", "binance", 60)
+
+    # ETH: 역프리미엄 -10% (진입 후보)
+    strategy.on_tick("ETH", "upbit", 5400000)
+    strategy.on_tick("ETH", "binance", 6000)
+
+    # XRP: 역프리미엄 -15% (진입 후보, 더 큼)
+    strategy.on_tick("XRP", "upbit", 850)
+    strategy.on_tick("XRP", "binance", 1.0)
+
+    candidates = strategy.get_entry_candidates()
+    assert len(candidates) == 2
+    assert candidates[0] == "XRP"  # 더 큰 역프리미엄이 먼저
+    assert candidates[1] == "ETH"
+
+
+def test_multi_premium_exit():
+    """MultiPremium: 프리미엄 복귀 시 청산"""
+    strategy = MultiPremiumStrategy(
+        symbols=["ETH"],
+        config={"fx_rate": 1000.0, "entry_threshold": -0.05, "exit_threshold": 0.01}
+    )
+
+    # 역프리미엄 진입
+    strategy.on_tick("ETH", "upbit", 5400000)
+    strategy.on_tick("ETH", "binance", 6000)
+    strategy.enter("ETH")
+    assert "ETH" in strategy.positions
+
+    # 프리미엄 복귀
+    strategy.on_tick("ETH", "upbit", 6120000)  # +2%
+    strategy.on_tick("ETH", "binance", 6000)
+
+    exits = strategy.get_exit_candidates()
+    assert "ETH" in exits
+
+
+def test_multi_premium_max_positions():
+    """MultiPremium: 최대 포지션 수 제한"""
+    strategy = MultiPremiumStrategy(
+        symbols=["BTC", "ETH", "XRP"],
+        config={"fx_rate": 1000.0, "entry_threshold": -0.05, "max_positions": 1}
+    )
+
+    # 모두 역프리미엄
+    for sym, upbit, binance in [("BTC", 54000, 60), ("ETH", 5400000, 6000), ("XRP", 850, 1.0)]:
+        strategy.on_tick(sym, "upbit", upbit)
+        strategy.on_tick(sym, "binance", binance)
+
+    # 1개만 진입 가능
+    candidates = strategy.get_entry_candidates()
+    assert len(candidates) == 1
+    strategy.enter(candidates[0])
+
+    # 추가 진입 불가
+    assert len(strategy.get_entry_candidates()) == 0
+
+
+def test_multi_premium_dashboard_data():
+    """MultiPremium: 대시보드 데이터 정상 반환"""
+    strategy = MultiPremiumStrategy(
+        symbols=["BTC", "ETH"],
+        config={"fx_rate": 1400.0}
+    )
+    strategy.on_tick("BTC", "upbit", 104000000)
+    strategy.on_tick("BTC", "binance", 70000)
+    strategy.on_tick("ETH", "upbit", 5000000)
+    strategy.on_tick("ETH", "binance", 3500)
+
+    data = strategy.get_dashboard_data()
+    assert len(data) == 2
+    assert all("symbol" in d and "premium" in d for d in data)
