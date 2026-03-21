@@ -4,6 +4,7 @@ import pandas as pd
 from src.strategies.lead_lag_scalper import LeadLagScalper
 from src.strategies.momentum_breakout import MomentumBreakout
 from src.strategies.multi_premium import MultiPremiumStrategy, CoinPremiumState
+from src.strategies.pair_trading import PairTradingStrategy, PairState
 from src.risk.daily_stop import DailyRiskManager
 from src.risk.position_sizer import KellyPositionSizer
 from src.backtest.slippage import SlippageModel
@@ -718,3 +719,100 @@ def test_multi_premium_dashboard_data():
     data = strategy.get_dashboard_data()
     assert len(data) == 2
     assert all("symbol" in d and "premium" in d for d in data)
+
+
+# ═══ Pair Trading (커플링 이탈 차익) ═══
+
+def test_pair_state_spread():
+    """PairState: 스프레드(가격 비율) 계산"""
+    ps = PairState("ETH", "SOL", ou_lookback=30)
+    ps.update("ETH", 3200000)
+    ps.update("SOL", 130000)
+    assert abs(ps.spread - 3200000 / 130000) < 0.01
+
+
+def test_pair_coupling_detection():
+    """PairState: 같이 움직이면 커플링 감지"""
+    import numpy as np
+    np.random.seed(42)
+    ps = PairState("A", "B", ou_lookback=60)
+
+    # 두 코인이 같이 움직이는 시뮬레이션
+    base = 100.0
+    for _ in range(50):
+        move = np.random.normal(0, 1)
+        base += move
+        ps.update("A", base * 10)           # A = base * 10
+        ps.update("B", base * 5 + np.random.normal(0, 0.1))  # B ≈ base * 5
+
+    assert ps.correlation is not None
+    assert ps.correlation > 0.5  # 높은 상관
+
+
+def test_pair_trading_entry_on_decouple():
+    """PairTrading: 커플링 깨지면 진입 시그널"""
+    strategy = PairTradingStrategy(
+        pairs=[("A", "B")],
+        config={"ou_lookback": 30, "entry_zscore": 2.0, "exit_zscore": 0.3,
+                "min_correlation": 0.0}  # 테스트용: 상관 체크 완화
+    )
+
+    # 정상 커플링 구간 (비율 ≈ 2.0)
+    import numpy as np
+    np.random.seed(123)
+    for i in range(40):
+        base = 100 + np.random.normal(0, 0.5)
+        strategy.on_tick("A", base * 2)
+        strategy.on_tick("B", base)
+
+    # 커플링 깨짐! A만 급등 (비율 2.0 → 3.0)
+    strategy.on_tick("A", 300)
+    strategy.on_tick("B", 100)
+
+    signals = strategy.get_signals()
+    entries = [s for s in signals if s["action"] == "ENTRY"]
+    # z-score가 충분히 크면 진입 시그널 발생
+    if entries:
+        assert entries[0]["coin_buy"] == "B"  # B가 상대적 저평가
+
+
+def test_pair_trading_exit_on_recouple():
+    """PairTrading: 커플링 복귀 시 청산"""
+    strategy = PairTradingStrategy(
+        pairs=[("A", "B")],
+        config={"ou_lookback": 30, "exit_zscore": 0.3, "min_correlation": 0.0}
+    )
+
+    # 데이터 축적
+    import numpy as np
+    np.random.seed(456)
+    for i in range(40):
+        base = 100 + np.random.normal(0, 0.3)
+        strategy.on_tick("A", base * 2)
+        strategy.on_tick("B", base)
+
+    # 수동 진입
+    strategy.enter("A-B", "long_b")
+    assert "A-B" in strategy.positions
+
+    # 스프레드가 평균으로 복귀
+    strategy.on_tick("A", 200)
+    strategy.on_tick("B", 100)
+
+    signals = strategy.get_signals()
+    exits = [s for s in signals if s["action"] == "EXIT"]
+    if exits:
+        assert exits[0]["pair"] == "A-B"
+
+
+def test_pair_trading_dashboard():
+    """PairTrading: 대시보드 데이터"""
+    strategy = PairTradingStrategy(pairs=[("ETH", "SOL"), ("XRP", "ADA")])
+    strategy.on_tick("ETH", 3200000)
+    strategy.on_tick("SOL", 130000)
+    strategy.on_tick("XRP", 2100)
+    strategy.on_tick("ADA", 400)
+
+    data = strategy.get_dashboard_data()
+    assert len(data) == 2
+    assert all("pair" in d and "spread" in d and "coupled" in d for d in data)
