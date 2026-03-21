@@ -5,6 +5,7 @@ from src.strategies.lead_lag_scalper import LeadLagScalper
 from src.strategies.momentum_breakout import MomentumBreakout
 from src.strategies.multi_premium import MultiPremiumStrategy, CoinPremiumState
 from src.strategies.pair_trading import PairTradingStrategy, PairState
+from src.strategies.coupling_scanner import CouplingScanner
 from src.risk.daily_stop import DailyRiskManager
 from src.risk.position_sizer import KellyPositionSizer
 from src.backtest.slippage import SlippageModel
@@ -816,3 +817,84 @@ def test_pair_trading_dashboard():
     data = strategy.get_dashboard_data()
     assert len(data) == 2
     assert all("pair" in d and "spread" in d and "coupled" in d for d in data)
+
+
+# ═══ Coupling Scanner (실시간 커플링 감지) ═══
+
+def test_coupling_scanner_detects_coupling():
+    """CouplingScanner: 같이 움직이는 쌍 감지"""
+    import numpy as np
+    np.random.seed(42)
+
+    scanner = CouplingScanner(
+        symbols=["A", "B", "C"],
+        couple_threshold=0.6,
+        window=40,
+        scan_interval=1,  # 매 틱마다 스캔 (테스트용)
+    )
+
+    # A, B는 같이 움직임 (커플링), C는 독립
+    all_events = []
+    for _ in range(50):
+        move = np.random.normal(0, 1)
+        price_a = 100 + move * 2
+        price_b = 50 + move * 1  # A와 같은 방향
+        price_c = 200 + np.random.normal(0, 3)  # 독립
+
+        events = scanner.on_tick("A", price_a)
+        all_events.extend(events)
+        events = scanner.on_tick("B", price_b)
+        all_events.extend(events)
+        events = scanner.on_tick("C", price_c)
+        all_events.extend(events)
+
+    # A-B 커플링 감지됐는지
+    coupled = scanner.get_coupled_pairs()
+    coupled_syms = [(p["coin_a"], p["coin_b"]) for p in coupled]
+    assert ("A", "B") in coupled_syms or ("B", "A") in coupled_syms
+
+    # C는 A,B와 커플링 안 됨
+    for p in coupled:
+        assert not (p["coin_a"] == "C" or p["coin_b"] == "C") or p["correlation"] < 0.6
+
+
+def test_coupling_scanner_detects_decoupling():
+    """CouplingScanner: 커플링 해제 감지"""
+    import numpy as np
+    np.random.seed(99)
+
+    scanner = CouplingScanner(
+        symbols=["X", "Y"],
+        couple_threshold=0.6,
+        decouple_threshold=0.3,
+        window=30,
+        scan_interval=1,
+    )
+
+    # 처음: 같이 움직임 (커플링)
+    for _ in range(40):
+        move = np.random.normal(0, 1)
+        scanner.on_tick("X", 100 + move * 2)
+        scanner.on_tick("Y", 50 + move * 1)
+
+    assert len(scanner.get_coupled_pairs()) > 0
+
+    # 이후: 독립적으로 움직임 (커플링 해제)
+    all_events = []
+    for _ in range(40):
+        scanner.on_tick("X", 100 + np.random.normal(0, 5))
+        events = scanner.on_tick("Y", 50 + np.random.normal(0, 5))
+        all_events.extend(events)
+
+    # DECOUPLED 이벤트 발생했는지
+    decouple_events = [e for e in all_events if e["type"] == "DECOUPLED"]
+    # 커플링이 해제되었거나, 아직 해제 중이거나
+    assert len(decouple_events) > 0 or len(scanner.get_coupled_pairs()) == 0
+
+
+def test_coupling_scanner_stats():
+    """CouplingScanner: 통계 반환"""
+    scanner = CouplingScanner(symbols=["A", "B", "C"])
+    assert scanner.stats["tracking"] == 3
+    assert scanner.stats["coupled_pairs"] == 0
+    assert scanner.stats["total_possible_pairs"] == 3  # 3C2 = 3
